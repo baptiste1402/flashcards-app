@@ -11,7 +11,6 @@ if not os.path.exists(DATA_FOLDER):
     os.makedirs(DATA_FOLDER)
 
 # --- CSS PERSONNALISÉ POUR MOBILE ---
-# Cela réduit les marges énormes de Streamlit et grossit les boutons
 st.markdown("""
     <style>
         .block-container {
@@ -53,60 +52,94 @@ def start_game(data_list, deck_name):
 def load_excel(file_path):
     try:
         df = pd.read_excel(file_path)
+        # On vérifie juste que les colonnes existent, peu importe l'ordre
         if "Question" in df.columns and "Reponse" in df.columns:
             return df.to_dict('records')
         return None
     except:
         return None
 
-# --- 3. Menu (Caché dans la sidebar pour ne pas gêner) ---
+# --- 3. Barre Latérale (Menu & Réglages) ---
 with st.sidebar:
+    st.header("⚙️ Réglages")
+    
+    # --- NOUVEAUTÉ : LE BOUTON INVERSER ---
+    reverse_mode = st.toggle("🔄 Inverser (Réponse → Question)")
+    
+    st.markdown("---")
     st.header("📂 Mes Decks")
-    uploaded_file = st.file_uploader("Nouveau fichier", type=["xlsx"])
+    
+    # 1. Charger un nouveau fichier (Temporaire)
+    uploaded_file = st.file_uploader("Ajouter un fichier", type=["xlsx"])
     if uploaded_file:
         save_path = os.path.join(DATA_FOLDER, uploaded_file.name)
         with open(save_path, "wb") as f: f.write(uploaded_file.getbuffer())
         st.success("Ajouté !")
         st.rerun()
 
-    st.markdown("---")
-    files = [f for f in os.listdir(DATA_FOLDER) if f.endswith('.xlsx')]
+    # 2. Lister les fichiers (GitHub + Uploadés)
+    files = []
+    if os.path.exists(DATA_FOLDER):
+        files += [f for f in os.listdir(DATA_FOLDER) if f.endswith('.xlsx')]
+    files += [f for f in os.listdir('.') if f.endswith('.xlsx')]
+    files = list(set(files)) # Enlever les doublons
     
     if files:
         selected_file = st.selectbox("Choisir un deck", files)
-        if st.button("🚀 LANCER", use_container_width=True):
-            data = load_excel(os.path.join(DATA_FOLDER, selected_file))
-            if data:
-                start_game(data, selected_file)
-                st.rerun()
         
-        st.markdown("---")
-        if st.button("🗑️ Supprimer le deck", use_container_width=True):
-            os.remove(os.path.join(DATA_FOLDER, selected_file))
-            if st.session_state.current_deck_name == selected_file:
-                st.session_state.game_active = False
-            st.rerun()
+        col_go, col_del = st.columns(2)
+        with col_go:
+            if st.button("🚀 LANCER", type="primary"):
+                full_path = selected_file
+                if selected_file in os.listdir(DATA_FOLDER):
+                    full_path = os.path.join(DATA_FOLDER, selected_file)
+                
+                data = load_excel(full_path)
+                if data:
+                    start_game(data, selected_file)
+                    st.rerun()
+        with col_del:
+            if st.button("🗑️"):
+                # On essaie de supprimer du dossier mes_decks
+                try:
+                    os.remove(os.path.join(DATA_FOLDER, selected_file))
+                    if st.session_state.current_deck_name == selected_file:
+                        st.session_state.game_active = False
+                    st.rerun()
+                except:
+                    st.error("Impossible de supprimer (fichier GitHub ?)")
 
 # --- 4. Interface Principale (Le Jeu) ---
 
 if st.session_state.game_active and st.session_state.flashcards:
     
-    # Barre de progression minimaliste en haut
+    # --- LOGIQUE D'INVERSION ---
+    card = st.session_state.flashcards[st.session_state.index]
+    
+    if reverse_mode:
+        # Mode inversé : On montre la Réponse, on cache la Question
+        front_text = card['Reponse']
+        back_text = card['Question']
+        front_label = "INDICE / DÉFINITION"
+        back_label = "MOT À TROUVER"
+    else:
+        # Mode normal
+        front_text = card['Question']
+        back_text = card['Reponse']
+        front_label = "QUESTION"
+        back_label = "RÉPONSE"
+
+    # Barre de progression
     total = len(st.session_state.flashcards)
     current = st.session_state.index + 1
-    progress = st.session_state.index / total
-    st.progress(progress)
-    
-    # Petit indicateur discret
-    st.caption(f"📖 {st.session_state.current_deck_name} | Carte {current}/{total}")
+    st.progress(st.session_state.index / total)
+    st.caption(f"📖 {st.session_state.current_deck_name} | {current}/{total}")
 
-    # LOGIQUE DE FIN DE JEU
+    # FIN DE JEU
     if st.session_state.index >= total:
         st.markdown("## 🏁 Terminé !")
-        
         if len(st.session_state.retry_deck) > 0:
             st.warning(f"{len(st.session_state.retry_deck)} erreurs à revoir.")
-            # Espace vide pour aérer
             st.write("") 
             if st.button("🔄 REVOIR MES ERREURS", type="primary"):
                 st.session_state.flashcards = st.session_state.retry_deck
@@ -121,36 +154,30 @@ if st.session_state.game_active and st.session_state.flashcards:
                 st.session_state.game_active = False
                 st.rerun()
 
-    # AFFICHAGE DE LA CARTE
+    # AFFICHAGE CARTE
     else:
-        card = st.session_state.flashcards[st.session_state.index]
-
-        # Bloc Question (Gros titre pour lecture facile)
+        # FACE A (Visible)
         st.markdown(f"""
         <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-bottom: 20px; text-align: center;">
-            <p style="color: #555; font-size: 14px; margin: 0;">QUESTION</p>
-            <h2 style="color: #000; margin: 10px 0;">{card['Question']}</h2>
+            <p style="color: #555; font-size: 14px; margin: 0; text-transform: uppercase;">{front_label}</p>
+            <h2 style="color: #000; margin: 10px 0;">{front_text}</h2>
         </div>
         """, unsafe_allow_html=True)
 
-        # Si la réponse est cachée
+        # FACE B (Cachée ou Révélée)
         if not st.session_state.show_answer:
-            # Gros bouton primaire
-            if st.button("👀 VOIR LA RÉPONSE", type="primary", use_container_width=True):
+            if st.button("👀 RETOURNER", type="primary", use_container_width=True):
                 st.session_state.show_answer = True
                 st.rerun()
         
-        # Si la réponse est visible
         else:
-            # Bloc Réponse (Style différent)
             st.markdown(f"""
             <div style="background-color: #e8f5e9; padding: 20px; border-radius: 10px; margin-bottom: 20px; text-align: center; border: 2px solid #4CAF50;">
-                <p style="color: #2e7d32; font-size: 14px; margin: 0;">RÉPONSE</p>
-                <h2 style="color: #1b5e20; margin: 10px 0;">{card['Reponse']}</h2>
+                <p style="color: #2e7d32; font-size: 14px; margin: 0; text-transform: uppercase;">{back_label}</p>
+                <h2 style="color: #1b5e20; margin: 10px 0;">{back_text}</h2>
             </div>
             """, unsafe_allow_html=True)
 
-            # Boutons de vote côte à côte
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("❌ À revoir", use_container_width=True):
@@ -165,6 +192,5 @@ if st.session_state.game_active and st.session_state.flashcards:
                     st.rerun()
 
 else:
-    # Écran d'accueil simple
     st.title("📱 Flashcards")
-    st.info("👈 Ouvre le menu en haut à gauche pour choisir un deck.")
+    st.info("👈 Ouvre le menu pour choisir un deck.")
